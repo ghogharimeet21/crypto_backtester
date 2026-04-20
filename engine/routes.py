@@ -4,19 +4,12 @@ from flask import Blueprint, request, jsonify
 
 
 from engine.evaluator import sample_strategy
-from engine.evaluator.sample_strategy.models import SampleStrategy
-
 
 
 logger = logging.getLogger(__name__)
 
 
-
 engine_bp = Blueprint("engine", __name__, url_prefix="/engine")
-
-
-
-
 
 
 @engine_bp.route("/health", methods=["GET"])
@@ -26,12 +19,13 @@ def health():
 
 @engine_bp.route("/sample_strategy", methods=["POST"])
 def sample_backtest():
-    strategy = SampleStrategy(request.json)
-    sample_strategy.excecute(strategy)
 
-    return jsonify(
-        {
-            "status": "success"
-        }
-    )
+    try:
+
+        strategy = sample_strategy.models.SampleStrategy(request.json)
+        sample_strategy.excecute(strategy)
+
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "faild", "err": str(e)})
     ...
