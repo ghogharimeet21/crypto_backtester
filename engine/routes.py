@@ -3,6 +3,8 @@ import logging
 from flask import Blueprint, request, jsonify
 
 
+from engine.evaluator import sample_strategy
+from engine.evaluator.sample_strategy.models import SampleStrategy
 
 
 
@@ -24,5 +26,12 @@ def health():
 
 @engine_bp.route("/sample_strategy", methods=["POST"])
 def sample_backtest():
-    
+    strategy = SampleStrategy(request.json)
+    sample_strategy.excecute(strategy)
+
+    return jsonify(
+        {
+            "status": "success"
+        }
+    )
     ...

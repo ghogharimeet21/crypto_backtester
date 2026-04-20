@@ -1,6 +1,6 @@
 from typing import Dict
 from data.models import Quote
-from data.utils import shift_date, date_to_ms, split_datetime
+from data.utils import shift_date, date_to_ms, split_datetime, hms_to_seconds
 import logging
 import requests
 
@@ -25,6 +25,8 @@ class MetaData:
     def load_data(self, symbol: str, start_date: int, end_date: int, interval="1m"):
         start_ts = date_to_ms(start_date)
         end_ts = date_to_ms(end_date)
+
+        logger.info(f"start Data Loading for symbol = {symbol} start_date = {start_date} end_date = {end_date}")
 
         current_start = start_ts
 
@@ -109,6 +111,12 @@ class MetaData:
             if symbol not in self.resampled_info:
                 self.resampled_info[symbol] = set()
             self.resampled_info[symbol].add(timeframe)
+    
+    def get_quote(self, symbol: str, date: int, time: int | str, timeframe: int = None) -> Quote | None:
+        if isinstance(time, str):
+            time = hms_to_seconds(time)
+        if not timeframe or timeframe == 60:
+            return self.base_quotes.get(symbol, {}).get(date, {}).get(time)
 
 
     def resample_quotes(self, symbol: str, start_date: int, end_date: int, timeframe: int):
