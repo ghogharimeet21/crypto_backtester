@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 BINANCE_HISTORICAL_URL = "https://api.binance.com/api/v3/klines"
 
+
 class MetaData:
     def __init__(self):
         # symbol -> date -> time -> quote
@@ -26,7 +27,9 @@ class MetaData:
         start_ts = date_to_ms(start_date)
         end_ts = date_to_ms(end_date)
 
-        logger.info(f"start Data Loading for symbol = {symbol} start_date = {start_date} end_date = {end_date}")
+        logger.info(
+            f"start Data Loading for symbol = {symbol} start_date = {start_date} end_date = {end_date}"
+        )
 
         current_start = start_ts
 
@@ -77,7 +80,6 @@ class MetaData:
             f"Data loaded for symbol={symbol}, start_date={start_date}, end_date={end_date}"
         )
 
-
     def insert_quote(
         self, date: int, time: int, symbol: str, quote: Quote, timeframe: int = None
     ):
@@ -111,13 +113,21 @@ class MetaData:
             if symbol not in self.resampled_info:
                 self.resampled_info[symbol] = set()
             self.resampled_info[symbol].add(timeframe)
-    
-    def get_quote(self, symbol: str, date: int, time: int | str, timeframe: int = None) -> Quote | None:
+
+    def get_quote(
+        self, symbol: str, date: int, time: int | str, timeframe: int = None
+    ) -> Quote | None:
         if isinstance(time, str):
             time = hms_to_seconds(time)
         if not timeframe or timeframe == 60:
             return self.base_quotes.get(symbol, {}).get(date, {}).get(time)
-
+        else:
+            return (
+                self.resampled_quotes.get(symbol, {})
+                .get(timeframe, {})
+                .get(date, {})
+                .get(time)
+            )
 
     def resample_quotes(self, symbol: str, start_date: int, end_date: int, timeframe: int):
 
@@ -139,17 +149,10 @@ class MetaData:
         sym_data = self.base_quotes[symbol]
         already_done = self.available_dates[symbol][timeframe]
 
-        if already_done:
-            earliest_done = min(already_done)
-            latest_done   = max(already_done)
-            def needs_resampling(date: int) -> bool:
-                return date < earliest_done or date > latest_done
-        else:
-            def needs_resampling(date: int) -> bool:
-                return True
+        def needs_resampling(date: int) -> bool:
+            return date not in already_done
 
         for date, day_data in sym_data.items():
-
             if date < start_date or date > end_date:
                 continue
             if not day_data:
@@ -157,32 +160,23 @@ class MetaData:
             if not needs_resampling(date):
                 continue
 
-            all_times = sorted(day_data) 
+            all_times = sorted(day_data)
             resampled_day = {}
-
             bucket_time = -1
             o = h = l = c = v = 0.0
 
             for t in all_times:
                 q = day_data[t]
-                b = (t // timeframe) * timeframe  
+                b = (t // timeframe) * timeframe
 
                 if b != bucket_time:
                     if bucket_time != -1:
-                        resampled_day[bucket_time] = Quote(
-                            _open=o, _high=h, _low=l, _close=c, _volume=v
-                        )
+                        resampled_day[bucket_time] = Quote(_open=o, _high=h, _low=l, _close=c, _volume=v)
                     bucket_time = b
-                    o = q._open
-                    h = q._high
-                    l = q._low
-                    c = q._close
-                    v = q._volume
+                    o, h, l, c, v = q._open, q._high, q._low, q._close, q._volume
                 else:
-                    if q._high > h:
-                        h = q._high
-                    if q._low < l:
-                        l = q._low
+                    if q._high > h: h = q._high
+                    if q._low < l:  l = q._low
                     c = q._close
                     v += q._volume
 
@@ -190,7 +184,6 @@ class MetaData:
                 resampled_day[bucket_time] = Quote(_open=o, _high=h, _low=l, _close=c, _volume=v)
 
             self.resampled_quotes[symbol][timeframe][date] = resampled_day
-            self.available_dates[symbol][timeframe].add(date)
-
+            already_done.add(date)
 
 meta_data = MetaData()

@@ -2,11 +2,11 @@ import logging
 from datetime import datetime, timedelta
 from typing import List
 
-
 BINANCE_HISTORICAL_URL = "https://api.binance.com/api/v3/klines"
 
 
 logger = logging.getLogger(__name__)
+
 
 
 def date_to_ms(date_str: str) -> int:
