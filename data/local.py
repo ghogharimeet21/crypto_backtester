@@ -26,47 +26,54 @@ class MetaData:
         # symbol -> [time_frame]
         self.resampled_info: Dict[str, set] = {}
 
-    def load_default_data(self):
+    ############################################################################################################
+    # Data Loading
+
+    def load_default_data(self, csv: bool = True):
         CSV_PATH = "btcusdt_jan2026.csv"
-        if os.path.exists(CSV_PATH):
-            logger.info("Loading BTCUSDT Jan 2026 from local CSV...")
-            df = read_csv(CSV_PATH)
-            for _, row in df.iterrows():
-                meta_data.insert_quote(
-                    int(row["date_int"]),
-                    int(row["time_seconds"]),
-                    "BTCUSDT",
-                    Quote(
-                        row["open"],
-                        row["high"],
-                        row["low"],
-                        row["close"],
-                        row["volume"],
-                    ),
-                )
+
+        if csv:
+            if os.path.exists(CSV_PATH):
+                logger.info("Loading BTCUSDT Jan 2026 from local CSV...")
+                df = read_csv(CSV_PATH)
+                for _, row in df.iterrows():
+                    meta_data.insert_quote(
+                        int(row["date_int"]),
+                        int(row["time_seconds"]),
+                        "BTCUSDT",
+                        Quote(
+                            row["open"],
+                            row["high"],
+                            row["low"],
+                            row["close"],
+                            row["volume"],
+                        ),
+                    )
+            else:
+                logger.info("Fetching BTCUSDT Jan 2026 from Binance...")
+                meta_data.load_data("BTCUSDT", "20260101", "20260201")
+                # flatten meta_data into CSV so next startup loads from disk
+                rows = []
+                for date, times in meta_data.base_quotes.get("BTCUSDT", {}).items():
+                    for time_sec, q in times.items():
+                        rows.append(
+                            {
+                                "date_int": date,
+                                "time_seconds": time_sec,
+                                "open": q._open,
+                                "high": q._high,
+                                "low": q._low,
+                                "close": q._close,
+                                "volume": q._volume,
+                            }
+                        )
+
+                DataFrame(rows).to_csv(CSV_PATH, index=False)
+                logger.info(f"Saved {len(rows):,} candles to {CSV_PATH}")
+            logger.info("Done.")
         else:
             logger.info("Fetching BTCUSDT Jan 2026 from Binance...")
             meta_data.load_data("BTCUSDT", "20260101", "20260201")
-
-            # flatten meta_data into CSV so next startup loads from disk
-            rows = []
-            for date, times in meta_data.base_quotes.get("BTCUSDT", {}).items():
-                for time_sec, q in times.items():
-                    rows.append(
-                        {
-                            "date_int": date,
-                            "time_seconds": time_sec,
-                            "open": q._open,
-                            "high": q._high,
-                            "low": q._low,
-                            "close": q._close,
-                            "volume": q._volume,
-                        }
-                    )
-
-            DataFrame(rows).to_csv(CSV_PATH, index=False)
-            logger.info(f"Saved {len(rows):,} candles to {CSV_PATH}")
-        logger.info("Done.")
 
     def load_data(self, symbol: str, start_date: int, end_date: int, interval="1m"):
         start_ts = date_to_ms(start_date)
@@ -125,9 +132,17 @@ class MetaData:
             f"Data loaded for symbol={symbol}, start_date={start_date}, end_date={end_date}"
         )
 
+    # Data Loading
+    ############################################################################################################
+
+    ############################################################################################################
+    # meta_data ops
+
     def insert_quote(
         self, date: int, time: int, symbol: str, quote: Quote, timeframe: int = None
     ):
+        quote.date = date
+        quote.time = time
 
         if (not timeframe) or timeframe == 60:
             if symbol not in self.base_quotes:
@@ -174,6 +189,15 @@ class MetaData:
                 .get(time)
             )
 
+    # meta_data ops
+    ############################################################################################################
+
+    ############################################################################################################
+    # meta_data resampling
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    # resampling utils
+
     def get_best_base(self, symbol: str, target_tf: int):
         candidates = [60]
 
@@ -210,9 +234,12 @@ class MetaData:
         times = sorted(base_data.keys())
 
         bucket: List[Quote] = []
+        bucket_open_time: int = None
         ratio = target_tf // base_tf
 
         for i, t in enumerate(times):
+            if len(bucket) == 0:
+                bucket_open_time = t  # capture the opening time of this candle
             bucket.append(base_data[t])
 
             if len(bucket) == ratio:
@@ -224,19 +251,23 @@ class MetaData:
 
                 self.insert_quote(
                     date,
-                    t,  # closing time of candle
+                    bucket_open_time,  # opening time of candle (not closing)
                     symbol,
                     Quote(o, h, l, c, v),
                     timeframe=target_tf,
                 )
 
                 bucket.clear()
+                bucket_open_time = None
 
     def get_not_available_dates(
         self, date_span: List[int], symbol: str, timeframe: int
     ) -> List[int]:
         available = self.available_dates.get(symbol, {}).get(timeframe, set())
         return [date for date in date_span if date not in available]
+
+    # resampling utils
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     def resample_quotes(
         self, symbol: str, start_date: int, end_date: int, timeframe: int = None
@@ -266,6 +297,8 @@ class MetaData:
 
             self.resample_day(symbol, date, base_tf, timeframe)
 
+    # meta_data resampling
+    ############################################################################################################
 
 
 meta_data = MetaData()
