@@ -1,7 +1,7 @@
 from .models import SampleStrategy
 from data.local import meta_data
 import logging
-
+from data.utils import seconds_to_hms
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,10 @@ def excecute(strategy: SampleStrategy):
 
     print(strategy.timeframe)
 
-    quote = meta_data.get_quote(strategy.symbol, strategy.entry_date, strategy.entry_time - 60, strategy.timeframe)
+    entry_time = strategy.entry_time
+
+
+    quote = meta_data.get_quote(strategy.symbol, strategy.entry_date, entry_time, strategy.timeframe)
     
 
     print(quote)

@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 BINANCE_HISTORICAL_URL = "https://api.binance.com/api/v3/klines"
@@ -15,7 +15,7 @@ def date_to_ms(date_str: str) -> int:
 
 
 def split_datetime(ms: int):
-    dt = datetime.fromtimestamp(ms / 1000)
+    dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)  # ← correct UTC, not deprecated
 
     date_int = int(dt.strftime("%Y%m%d"))
     seconds = dt.hour * 3600 + dt.minute * 60 + dt.second
