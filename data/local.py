@@ -160,7 +160,8 @@ class MetaData:
         else:
             if symbol not in self.resampled_quotes:
                 self.resampled_quotes[symbol] = {}
-                self.available_dates[symbol] = {}
+                if symbol not in self.available_dates:
+                    self.available_dates[symbol] = {}
             if timeframe not in self.resampled_quotes[symbol]:
                 self.resampled_quotes[symbol][timeframe] = {}
                 self.available_dates[symbol][timeframe] = set()
@@ -272,6 +273,11 @@ class MetaData:
     def resample_quotes(
         self, symbol: str, start_date: int, end_date: int, timeframe: int = None
     ):
+        if timeframe is None:
+            raise ValueError("timeframe is required for resampling")
+        if timeframe <= 0:
+            raise ValueError("timeframe must be positive")
+
         date_span = get_date_span(start_date, end_date)
 
         not_available_dates = self.get_not_available_dates(date_span, symbol, 60)
@@ -282,7 +288,8 @@ class MetaData:
             logger.info(
                 f"1min data is loading for symbol={symbol}, start_date={start}, end_date={end}"
             )
-            self.load_data(symbol, start, end)
+            # `load_data` treats end_date as exclusive, so shift by +1 day to include `end`.
+            self.load_data(symbol, start, shift_date(end, 1))
 
         base_tf = self.get_best_base(symbol, timeframe)
         if base_tf is None:
