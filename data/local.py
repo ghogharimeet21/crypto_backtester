@@ -26,6 +26,11 @@ class MetaData:
         # symbol -> [time_frame]
         self.resampled_info: Dict[str, set] = {}
 
+        # symbol -> timeframe -> indicator -> date -> time -> value
+        self.indicators: Dict[
+            str, Dict[int, Dict[str, Dict[int, Dict[int, float]]]]
+        ] = {}
+
     ############################################################################################################
     # Data Loading
 
@@ -37,11 +42,13 @@ class MetaData:
                 logger.info("Loading BTCUSDT Jan 2026 from local CSV...")
                 df = read_csv(CSV_PATH)
                 for _, row in df.iterrows():
+                    d = int(row["date_int"])
+                    t = int(row["time_seconds"])
                     meta_data.insert_quote(
-                        int(row["date_int"]),
-                        int(row["time_seconds"]),
-                        "BTCUSDT",
                         Quote(
+                            d,
+                            t,
+                            "BTCUSDT",
                             row["open"],
                             row["high"],
                             row["low"],
@@ -119,10 +126,16 @@ class MetaData:
                 _volume = float(row[5])
 
                 self.insert_quote(
-                    date_int,
-                    time_seconds,
-                    symbol,
-                    Quote(_open, _high, _low, _close, _volume),
+                    Quote(
+                        date_int,
+                        time_seconds,
+                        symbol,
+                        _open,
+                        _high,
+                        _low,
+                        _close,
+                        _volume,
+                    ),
                 )
 
             # move cursor forward (key step)
@@ -138,11 +151,8 @@ class MetaData:
     ############################################################################################################
     # meta_data ops
 
-    def insert_quote(
-        self, date: int, time: int, symbol: str, quote: Quote, timeframe: int = None
-    ):
-        quote.date = date
-        quote.time = time
+    def insert_quote(self, quote: Quote, timeframe: int = None):
+        date, time, symbol = quote.date, quote.time, quote.symbol
 
         if (not timeframe) or timeframe == 60:
             if symbol not in self.base_quotes:
@@ -189,6 +199,117 @@ class MetaData:
                 .get(date, {})
                 .get(time)
             )
+
+    def get_quotes_series(
+        self, symbol: str, start_date: int, end_date: int, timeframe: int = None
+    ) -> List[Quote]:
+        date_span = get_date_span(start_date, end_date)
+        quotes: List[Quote] = []
+
+        for date in date_span:
+            if (not timeframe) or timeframe == 60:
+                day_quotes = self.base_quotes.get(symbol, {}).get(date, {})
+            else:
+                day_quotes = (
+                    self.resampled_quotes.get(symbol, {})
+                    .get(timeframe, {})
+                    .get(date, {})
+                )
+
+            for time in sorted(day_quotes.keys()):
+                quotes.append(day_quotes[time])
+
+        return quotes
+
+    def _set_indicator_value(
+        self,
+        symbol: str,
+        timeframe: int,
+        indicator_name: str,
+        date: int,
+        time: int,
+        value: float,
+    ):
+        if symbol not in self.indicators:
+            self.indicators[symbol] = {}
+        if timeframe not in self.indicators[symbol]:
+            self.indicators[symbol][timeframe] = {}
+        if indicator_name not in self.indicators[symbol][timeframe]:
+            self.indicators[symbol][timeframe][indicator_name] = {}
+        if date not in self.indicators[symbol][timeframe][indicator_name]:
+            self.indicators[symbol][timeframe][indicator_name][date] = {}
+
+        self.indicators[symbol][timeframe][indicator_name][date][time] = value
+
+    def get_indicator(
+        self,
+        symbol: str,
+        timeframe: int,
+        indicator_name: str,
+        date: int,
+        time: int | str,
+    ) -> float | None:
+        if isinstance(time, str):
+            time = hms_to_seconds(time)
+
+        return (
+            self.indicators.get(symbol, {})
+            .get(timeframe, {})
+            .get(indicator_name, {})
+            .get(date, {})
+            .get(time)
+        )
+
+    def compute_sma(
+        self,
+        symbol: str,
+        timeframe: int,
+        period: int,
+        start_date: int,
+        end_date: int,
+    ):
+        if period <= 0:
+            raise ValueError("period must be positive")
+        if timeframe <= 0:
+            raise ValueError("timeframe must be positive")
+
+        if timeframe != 60:
+            self.resample_quotes(symbol, start_date, end_date, timeframe)
+        else:
+            missing_dates = self.get_not_available_dates(
+                get_date_span(start_date, end_date), symbol, 60
+            )
+            if missing_dates:
+                self.load_data(
+                    symbol, min(missing_dates), shift_date(max(missing_dates), 1)
+                )
+
+        quotes = self.get_quotes_series(symbol, start_date, end_date, timeframe)
+        indicator_name = f"SMA_{period}"
+
+        if len(quotes) < period:
+            logger.warning(
+                f"Not enough candles for {indicator_name}: have={len(quotes)}, need={period}"
+            )
+            return
+
+        rolling_sum = 0.0
+        for i, quote in enumerate(quotes):
+            rolling_sum += quote._close
+
+            if i >= period:
+                rolling_sum -= quotes[i - period]._close
+
+            if i >= period - 1:
+                sma_value = rolling_sum / period
+                self._set_indicator_value(
+                    symbol,
+                    timeframe,
+                    indicator_name,
+                    quote.date,
+                    quote.time,
+                    sma_value,
+                )
 
     # meta_data ops
     ############################################################################################################
@@ -251,10 +372,7 @@ class MetaData:
                 v = sum(q._volume for q in bucket)
 
                 self.insert_quote(
-                    date,
-                    bucket_open_time,  # opening time of candle (not closing)
-                    symbol,
-                    Quote(o, h, l, c, v),
+                    Quote(date, bucket_open_time, symbol, o, h, l, c, v),
                     timeframe=target_tf,
                 )
 
@@ -269,6 +387,10 @@ class MetaData:
 
     # resampling utils
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    ############################################################################################################
+    # meta_data resampling module
+    ############################################################################################################
 
     def resample_quotes(
         self, symbol: str, start_date: int, end_date: int, timeframe: int = None
@@ -304,7 +426,7 @@ class MetaData:
 
             self.resample_day(symbol, date, base_tf, timeframe)
 
-    # meta_data resampling
+    # meta_data resampling module
     ############################################################################################################
 
 
