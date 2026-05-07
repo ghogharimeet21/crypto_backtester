@@ -119,9 +119,7 @@ class MetaData:
             # {"code": -1003, "msg": "Too many requests"}.
             # Iterating over a dict treats its keys as rows and crashes on row[0].
             if isinstance(data, dict):
-                raise RuntimeError(
-                    f"Binance API error for symbol={symbol}: {data}"
-                )
+                raise RuntimeError(f"Binance API error for symbol={symbol}: {data}")
 
             if not data:
                 break
