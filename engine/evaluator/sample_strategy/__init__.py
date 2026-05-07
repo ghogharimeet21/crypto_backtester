@@ -10,22 +10,13 @@ logger = logging.getLogger(__name__)
 
 def excecute(strategy: SampleStrategy):
 
-    logger.info("resamplling...")
-
-    meta_data.resample_quotes(strategy.symbol, strategy.entry_date, strategy.exit_date, strategy.timeframe)
-
-    logger.info("data resampled.")
-
-    # data = meta_data.resampled_quotes[strategy.symbol]
-
-    # print(data)
-
-    print(strategy.timeframe)
-
-    entry_time = strategy.entry_time
 
 
-    quote = meta_data.get_quote(strategy.symbol, strategy.entry_date, entry_time, strategy.timeframe)
-    
+    quotes = meta_data.get_quotes_series(
+        strategy.symbol,
+        strategy.date_span[0],
+        strategy.date_span[-1]
+    )
 
-    print(quote)
+    for quote in quotes:
+        ...
