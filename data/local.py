@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 BINANCE_HISTORICAL_URL = "https://api.binance.com/api/v3/klines"
 
+class Indicator:
+    def __init__(self):
+        self.sma = {}
+
 
 class MetaData:
     def __init__(self):
@@ -28,7 +32,7 @@ class MetaData:
 
         # symbol -> timeframe -> indicator -> date -> time -> value
         self.indicators: Dict[
-            str, Dict[int, Dict[str, Dict[int, Dict[int, float]]]]
+            str, Dict[int, Dict[str, Dict[int, Dict[int, float]]]]      #<<<<<< old way
         ] = {}
 
     # =========================================================================

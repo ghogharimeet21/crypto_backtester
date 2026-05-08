@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, List
 from data.utils import seconds_to_hms
-
+from oms.enums import TradeStatus
 
 
 
@@ -12,6 +12,8 @@ class Trade:
         self.entry_date = entry_date
         self.entry_time = entry_time
         self.entry_price = entry_price
+
+        self.trade_status: TradeStatus = TradeStatus.OPEN
 
         self.exit_date: Optional[int] = None
         self.exit_time: Optional[int] = None
@@ -26,6 +28,8 @@ class Trade:
         self.pnl = exit_price - self.entry_price
         self.pnl_pct = (self.pnl / self.entry_price) * 100
 
+        self.trade_status = TradeStatus.CLOSE
+
     def to_dict(self) -> dict:
         return {
             "entry_date": self.entry_date,
@@ -36,6 +40,7 @@ class Trade:
             "exit_price": self.exit_price,
             "pnl": round(self.pnl, 4) if self.pnl is not None else None,
             "pnl_pct": round(self.pnl_pct, 4) if self.pnl_pct is not None else None,
+            "is_open": self.exit_time is None,
         }
 
 
