@@ -2,7 +2,7 @@ from oms.models import Trade, BacktestResult
 from .models import SmaCrossoverStrategy
 from data.local import meta_data
 import logging
-from typing import List, Dict, Optional
+from typing import List, Optional
 from data.utils import seconds_to_hms
 
 logger = logging.getLogger(__name__)
@@ -22,31 +22,28 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
 
     Data flow
     ---------
-    1. meta_data.compute_sma  — loads / resamples quotes, then writes indicator
-                                 values into meta_data.indicators in one pass.
-    2. meta_data.get_quotes_series — returns the ordered list of Quote objects
-                                      we iterate bar by bar.
-    3. meta_data.get_indicator — O(1) dict lookup per bar to read each SMA value.
+    1. meta_data.indicators.compute_sma — loads / resamples quotes, then writes
+                                           indicator values into meta_data.indicators.
+    2. meta_data.get_quotes_series       — returns the ordered list of Quote objects
+                                           we iterate bar by bar.
+    3. meta_data.indicators.get_sma      — O(1) dict lookup per bar to read each SMA.
     """
 
     symbol = strategy.symbol
-    tf = strategy.timeframe
-    fast_name = f"SMA_{strategy.fast_period}"
-    slow_name = f"SMA_{strategy.slow_period}"
+    tf     = strategy.timeframe
 
     # ------------------------------------------------------------------
     # Step 1: Compute both SMAs across the full date range.
-    #         This also handles data loading / resampling internally via
-    #         validate_relevant_quotes, so we don't need to call load_data
-    #         or resample_quotes manually.
+    #         validate_relevant_quotes is called internally — no need to
+    #         call load_data or resample_quotes manually.
     # ------------------------------------------------------------------
-    logger.info(f"Computing {fast_name} on {symbol} tf={tf}...")
-    meta_data.compute_sma(
+    logger.info(f"Computing SMA_{strategy.fast_period} on {symbol} tf={tf}...")
+    meta_data.indicators.compute_sma(
         symbol, tf, strategy.fast_period, strategy.start_date, strategy.end_date
     )
 
-    logger.info(f"Computing {slow_name} on {symbol} tf={tf}...")
-    meta_data.compute_sma(
+    logger.info(f"Computing SMA_{strategy.slow_period} on {symbol} tf={tf}...")
+    meta_data.indicators.compute_sma(
         symbol, tf, strategy.slow_period, strategy.start_date, strategy.end_date
     )
 
@@ -64,7 +61,7 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
     # ------------------------------------------------------------------
     # Step 3: Walk bar by bar.
     # ------------------------------------------------------------------
-    trades: List[Trade] = []
+    trades: List[Trade]     = []
     open_trade: Optional[Trade] = None
 
     prev_fast: Optional[float] = None
@@ -74,13 +71,12 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
         date, time = quote.date, quote.time
 
         # Read pre-computed indicator values for this exact bar.
-        # Returns None for the first (period - 1) bars where the SMA
-        # window isn't full yet — we skip those bars.
-        fast = meta_data.get_indicator(symbol, tf, fast_name, date, time)
-        slow = meta_data.get_indicator(symbol, tf, slow_name, date, time)
+        # period is now required — both fast and slow go through the same get_sma.
+        # Returns None for warmup bars — we skip those.
+        fast = meta_data.indicators.get_sma(symbol, tf, strategy.fast_period, date, time)
+        slow = meta_data.indicators.get_sma(symbol, tf, strategy.slow_period, date, time)
 
         if fast is None or slow is None or prev_fast is None or prev_slow is None:
-            # Not enough history yet to detect a crossover
             prev_fast, prev_slow = fast, slow
             continue
 
@@ -93,11 +89,11 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
             open_trade = Trade(
                 entry_date=date,
                 entry_time=time,
-                entry_price=quote._close,  # fill at close of signal bar
+                entry_price=quote._close,
             )
             logger.info(
                 f"BUY  {symbol} @ {quote._close:.2f}  "
-                f"date={date} time={time}  "
+                f"date={date} time={seconds_to_hms(time)}  "
                 f"fast={fast:.2f} slow={slow:.2f}"
             )
 
@@ -110,7 +106,7 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
             )
             logger.info(
                 f"SELL {symbol} @ {quote._close:.2f}  "
-                f"date={date} time={time}  "
+                f"date={date} time={seconds_to_hms(time)}  "
                 f"pnl={open_trade.pnl:.2f} ({open_trade.pnl_pct:.2f}%)"
             )
             trades.append(open_trade)
@@ -122,7 +118,7 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
     if open_trade is not None:
         logger.info(
             f"Strategy ended with an open position entered at "
-            f"date={open_trade.entry_date} time={open_trade.entry_time} "
+            f"date={open_trade.entry_date} time={seconds_to_hms(open_trade.entry_time)} "
             f"price={open_trade.entry_price:.2f}"
         )
         trades.append(open_trade)
