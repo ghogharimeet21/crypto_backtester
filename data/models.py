@@ -30,3 +30,15 @@ class Quote:
             f"symbol={self.symbol}, date={self.date}, time={time_str}, "
             f"open={self._open}, high={self._high}, low={self._low}, close={self._close}"
         )
+    
+    def to_dict(self):
+        return {
+            "symbol": self.symbol,
+            "date": self.date,
+            "time": seconds_to_hms(self.time),
+            "open": self._open,
+            "high": self._high,
+            "low": self._low,
+            "close": self._close,
+            "volume": self._volume,
+        }

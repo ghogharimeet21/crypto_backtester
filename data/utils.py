@@ -31,23 +31,6 @@ def shift_date(date: str | int, shift: int) -> int:
     )
 
 
-def generate_date_range(start, end, date_format: str = "%Y%m%d") -> List[int]:
-    """
-    enter start_date and end_date in format of '%y%m%d' in integers
-    you will get a list of integers of that dates in that start and end date range
-    """
-    dates = []
-    start_date = datetime.strptime(str(start), date_format)
-    end_date = datetime.strptime(str(end), date_format)
-    if start_date > end_date:
-        raise ValueError(f"{start_date.strftime(date_format)} is greter then {end_date.strftime(date_format)} please enter valid dates")
-    while start_date <= end_date:
-        dates.append(int(start_date.strftime(date_format)))
-        start_date += timedelta(days=1)
-    return dates
-
-
-
 def hms_to_seconds(time_str: str) -> int:
     hours, minutes, seconds = map(int, time_str.split(':'))
     if hours > 24:

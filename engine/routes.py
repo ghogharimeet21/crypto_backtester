@@ -34,15 +34,19 @@ def sma_crossover_backtest():
     try:
         start_time = time.time()
 
-        strategy = sma_crossover.models.SmaCrossoverStrategy(request.json)
-        result = sma_crossover.execute(strategy)
+        result = sma_crossover.execute(
+            sma_crossover.models.SmaCrossoverStrategy(request.json)
+        )
 
-        return jsonify(
-            {
-                "status": "success",
-                "execution_time_sec": round(time.time() - start_time, 3),
-                "result": result.to_dict(),
-            }
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "execution_time_sec": round(time.time() - start_time, 3),
+                    "result": result.to_dict(),
+                }
+            ),
+            200,
         )
     except Exception as e:
         logging.error(traceback.format_exc())
