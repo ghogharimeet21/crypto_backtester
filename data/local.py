@@ -44,7 +44,7 @@ class MetaData:
                 df = read_csv(CSV_PATH)
                 for _, row in df.iterrows():
                     d = int(row["date_int"])
-                    t = int(row["time_seconds"])
+                    t = int(float(row["time_seconds"]))
                     self.insert_quote(
                         Quote(
                             d,
@@ -127,6 +127,9 @@ class MetaData:
                     return
 
                 date_int, time_seconds = split_datetime(utc)
+
+                if date_int in self.available_dates:
+                    continue
 
                 self.insert_quote(
                     Quote(
@@ -241,7 +244,7 @@ class MetaData:
             missing_dates = self.get_not_available_dates(date_span, symbol, 60)
             if missing_dates:
                 self.load_data(
-                    symbol, min(missing_dates), shift_date(max(missing_dates), 1)
+                    symbol, shift_date(min(missing_dates), -2), shift_date(max(missing_dates), 1)
                 )
         else:
             self.resample_quotes(symbol, start_date, end_date, timeframe)
