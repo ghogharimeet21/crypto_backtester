@@ -7,28 +7,16 @@ import logging
 if TYPE_CHECKING:
     from data.local import MetaData
 
+from data.utils import shift_date
+
 logger = logging.getLogger(__name__)
 
 
+def _quote_in_range(date: int, start_date: int, end_date: int) -> bool:
+    return start_date <= date <= end_date
+
+
 class Indicator:
-    """
-    Self-contained indicator engine.
-
-    Storage shape:
-        single-value  →  symbol -> tf -> period -> date -> time -> float
-        multi-value   →  symbol -> tf -> params  -> date -> time -> Dict[str, float]
-
-    Where `params` is a tuple of the indicator's config, e.g.:
-        macd  → (fast, slow, signal)   e.g. (12, 26, 9)
-        bb    → (period, std_dev)      e.g. (20, 2.0)
-        stoch → (k_period, d_period)   e.g. (14, 3)
-
-    Missing data behaviour:
-        - Warmup bars (not enough history yet)  → slot simply not written → get_* returns None
-        - Entire date missing from quotes       → slot not written        → get_* returns None
-        - Strategy code must always null-check the return value of get_*
-    """
-
     def __init__(self, meta: "MetaData"):
         self._meta = meta
 
@@ -132,11 +120,31 @@ class Indicator:
     # Internal quote fetcher
     # =========================================================================
 
-    def _get_quotes(self, symbol: str, tf: int,
-                    start_date: int, end_date: int) -> List:
-        """Ensure data is ready then return the full quote series."""
-        self._meta.validate_relevant_quotes(symbol, start_date, end_date, tf)
-        return self._meta.get_quotes_series(symbol, start_date, end_date, tf)
+    @staticmethod
+    def _extended_start(start_date: int, timeframe: int, min_prior_bars: int) -> int:
+        """
+        Shift start_date back far enough to load ~min_prior_bars candles at `timeframe`
+        (24/7 crypto clock — uses 86400 s per day).
+        """
+        if min_prior_bars <= 0:
+            return start_date
+        bars_per_day = max(1, 86400 // timeframe)
+        calendar_days = min_prior_bars // bars_per_day + 5
+        return shift_date(start_date, -calendar_days)
+
+    def _get_quotes(
+        self,
+        symbol: str,
+        tf: int,
+        start_date: int,
+        end_date: int,
+        *,
+        warmup_bars: int = 0,
+    ) -> List:
+        """Ensure data is ready then return quotes (optionally extended backward for warmup)."""
+        ext = self._extended_start(start_date, tf, warmup_bars)
+        self._meta.validate_relevant_quotes(symbol, ext, end_date, tf)
+        return self._meta.get_quotes_series(symbol, ext, end_date, tf)
 
     # =========================================================================
     # Compute methods
@@ -151,7 +159,9 @@ class Indicator:
         if period <= 0:
             raise ValueError("period must be positive")
 
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=period
+        )
 
         if not quotes:
             logger.warning(f"SMA_{period}: no quotes found for {symbol} tf={tf}")
@@ -162,7 +172,7 @@ class Indicator:
             rolling_sum += q._close
             if i >= period:
                 rolling_sum -= quotes[i - period]._close
-            if i >= period - 1:
+            if i >= period - 1 and _quote_in_range(q.date, start_date, end_date):
                 self._set_sma(symbol, tf, period, q.date, q.time,
                               rolling_sum / period)
 
@@ -177,7 +187,9 @@ class Indicator:
         if period <= 0:
             raise ValueError("period must be positive")
 
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=period
+        )
 
         if not quotes:
             logger.warning(f"EMA_{period}: no quotes found for {symbol} tf={tf}")
@@ -194,12 +206,14 @@ class Indicator:
         k   = 2.0 / (period + 1)
         ema = sum(q._close for q in quotes[:period]) / period
 
-        self._set_ema(symbol, tf, period,
-                      quotes[period - 1].date, quotes[period - 1].time, ema)
+        q0 = quotes[period - 1]
+        if _quote_in_range(q0.date, start_date, end_date):
+            self._set_ema(symbol, tf, period, q0.date, q0.time, ema)
 
         for q in quotes[period:]:
             ema = q._close * k + ema * (1 - k)
-            self._set_ema(symbol, tf, period, q.date, q.time, ema)
+            if _quote_in_range(q.date, start_date, end_date):
+                self._set_ema(symbol, tf, period, q.date, q.time, ema)
 
     def compute_rsi(self, symbol: str, tf: int, period: int,
                     start_date: int, end_date: int):
@@ -211,7 +225,9 @@ class Indicator:
         if period <= 0:
             raise ValueError("period must be positive")
 
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=period + 1
+        )
 
         if not quotes:
             logger.warning(f"RSI_{period}: no quotes found for {symbol} tf={tf}")
@@ -236,16 +252,20 @@ class Indicator:
             return 100.0 if al == 0 else 100.0 - (100.0 / (1.0 + ag / al))
 
         # first valid RSI at index `period`
-        self._set_rsi(symbol, tf, period,
-                      quotes[period].date, quotes[period].time,
-                      _rsi(avg_gain, avg_loss))
+        q_r = quotes[period]
+        if _quote_in_range(q_r.date, start_date, end_date):
+            self._set_rsi(symbol, tf, period,
+                          q_r.date, q_r.time,
+                          _rsi(avg_gain, avg_loss))
 
         for i in range(period, len(changes)):
             avg_gain = (avg_gain * (period - 1) + max(changes[i], 0))      / period
             avg_loss = (avg_loss * (period - 1) + abs(min(changes[i], 0))) / period
-            self._set_rsi(symbol, tf, period,
-                          quotes[i + 1].date, quotes[i + 1].time,
-                          _rsi(avg_gain, avg_loss))
+            qn = quotes[i + 1]
+            if _quote_in_range(qn.date, start_date, end_date):
+                self._set_rsi(symbol, tf, period,
+                              qn.date, qn.time,
+                              _rsi(avg_gain, avg_loss))
 
     def compute_macd(self, symbol: str, tf: int,
                      fast: int, slow: int, signal: int,
@@ -257,7 +277,9 @@ class Indicator:
         Stored as  → {"line": float, "signal": float, "hist": float}
         Warmup bars (fewer than slow+signal candles) are skipped.
         """
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=slow + signal
+        )
         closes = [q._close for q in quotes]
 
         if not closes:
@@ -307,7 +329,11 @@ class Indicator:
         for i, q in enumerate(quotes):
             ml = macd_line[i]
             sv = sig_values[i]
-            if ml is not None and sv is not None:
+            if (
+                ml is not None
+                and sv is not None
+                and _quote_in_range(q.date, start_date, end_date)
+            ):
                 self._set_macd(symbol, tf, fast, slow, signal,
                                q.date, q.time,
                                line=ml, sig=sv, hist=ml - sv)
@@ -327,7 +353,9 @@ class Indicator:
         if period <= 0:
             raise ValueError("period must be positive")
 
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=period
+        )
         closes = [q._close for q in quotes]
 
         if not closes:
@@ -342,12 +370,15 @@ class Indicator:
             return
 
         for i in range(period - 1, len(closes)):
+            qi = quotes[i]
+            if not _quote_in_range(qi.date, start_date, end_date):
+                continue
             window   = closes[i - period + 1: i + 1]
             mid      = sum(window) / period
             variance = sum((v - mid) ** 2 for v in window) / period
             band     = std_dev * (variance ** 0.5)
             self._set_bb(symbol, tf, period, std_dev,
-                         quotes[i].date, quotes[i].time,
+                         qi.date, qi.time,
                          upper=mid + band, mid=mid, lower=mid - band)
 
     def compute_atr(self, symbol: str, tf: int, period: int,
@@ -362,7 +393,9 @@ class Indicator:
         if period <= 0:
             raise ValueError("period must be positive")
 
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=period + 1
+        )
 
         if not quotes:
             logger.warning(f"ATR_{period}: no quotes found for {symbol} tf={tf}")
@@ -387,11 +420,13 @@ class Indicator:
 
         atr    = sum(v for _, v in tr_pairs[:period]) / period
         seed_q = tr_pairs[period - 1][0]
-        self._set_atr(symbol, tf, period, seed_q.date, seed_q.time, atr)
+        if _quote_in_range(seed_q.date, start_date, end_date):
+            self._set_atr(symbol, tf, period, seed_q.date, seed_q.time, atr)
 
         for q, tr in tr_pairs[period:]:
             atr = (atr * (period - 1) + tr) / period
-            self._set_atr(symbol, tf, period, q.date, q.time, atr)
+            if _quote_in_range(q.date, start_date, end_date):
+                self._set_atr(symbol, tf, period, q.date, q.time, atr)
 
     def compute_stoch(self, symbol: str, tf: int,
                       k_period: int, d_period: int,
@@ -406,7 +441,9 @@ class Indicator:
         if k_period <= 0 or d_period <= 0:
             raise ValueError("periods must be positive")
 
-        quotes = self._get_quotes(symbol, tf, start_date, end_date)
+        quotes = self._get_quotes(
+            symbol, tf, start_date, end_date, warmup_bars=k_period + d_period
+        )
 
         if not quotes:
             logger.warning(f"STOCH ({k_period},{d_period}): no quotes found for {symbol} tf={tf}")
@@ -431,7 +468,7 @@ class Indicator:
 
         for i in range(len(k_values)):
             q, k = k_values[i]
-            if i >= d_period - 1:
+            if i >= d_period - 1 and _quote_in_range(q.date, start_date, end_date):
                 d = sum(v for _, v in k_values[i - d_period + 1: i + 1]) / d_period
                 self._set_stoch(symbol, tf, k_period, d_period,
                                 q.date, q.time, k=k, d=d)
