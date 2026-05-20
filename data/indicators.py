@@ -7,6 +7,7 @@ import logging
 if TYPE_CHECKING:
     from data.local import MetaData
 
+from data.models import Quote
 from data.utils import shift_date
 
 logger = logging.getLogger(__name__)
@@ -140,10 +141,10 @@ class Indicator:
         end_date: int,
         *,
         warmup_bars: int = 0,
-    ) -> List:
+    ) -> List[Quote]:
         """Ensure data is ready then return quotes (optionally extended backward for warmup)."""
         ext = self._extended_start(start_date, tf, warmup_bars)
-        self._meta.validate_relevant_quotes(symbol, ext, end_date, tf)
+        self._meta.fill_relevant_quotes(symbol, ext, end_date, tf)
         return self._meta.get_quotes_series(symbol, ext, end_date, tf)
 
     # =========================================================================

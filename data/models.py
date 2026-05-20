@@ -22,7 +22,16 @@ class Quote:
             self._low,
             self._close,
             self._volume,
-        ) = (date, time, symbol, _open, _high, _low, _close, _volume,)
+        ) = (
+            date,
+            time,
+            symbol,
+            _open,
+            _high,
+            _low,
+            _close,
+            _volume,
+        )
 
     def __str__(self):
         time_str = seconds_to_hms(self.time) if self.time is not None else None
@@ -30,7 +39,7 @@ class Quote:
             f"symbol={self.symbol}, date={self.date}, time={time_str}, "
             f"open={self._open}, high={self._high}, low={self._low}, close={self._close}"
         )
-    
+
     def to_dict(self):
         return {
             "symbol": self.symbol,
@@ -42,3 +51,17 @@ class Quote:
             "close": self._close,
             "volume": self._volume,
         }
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Quote):
+            return False
+        return (
+            self.symbol == other.symbol
+            and self.date == other.date
+            and self.time == other.time
+            and self._open == other._open
+            and self._high == other._high
+            and self._low == other._low
+            and self._close == other._close
+            and self._volume == other._volume
+        )
