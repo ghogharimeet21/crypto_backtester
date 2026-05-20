@@ -128,9 +128,6 @@ class MetaData:
 
                 date_int, time_seconds = split_datetime(utc)
 
-                if date_int in self.available_dates:
-                    continue
-
                 self.insert_quote(
                     Quote(
                         date_int,
@@ -236,7 +233,7 @@ class MetaData:
         available = self.available_dates.get(symbol, {}).get(timeframe, set())
         return [date for date in date_span if date not in available]
 
-    def validate_relevant_quotes(
+    def fill_relevant_quotes(
         self, symbol: str, start_date: int, end_date: int, timeframe: int
     ):
         if timeframe == 60:
@@ -244,7 +241,9 @@ class MetaData:
             missing_dates = self.get_not_available_dates(date_span, symbol, 60)
             if missing_dates:
                 self.load_data(
-                    symbol, shift_date(min(missing_dates), -2), shift_date(max(missing_dates), 1)
+                    symbol,
+                    shift_date(min(missing_dates), -2),
+                    shift_date(max(missing_dates), 1),
                 )
         else:
             self.resample_quotes(symbol, start_date, end_date, timeframe)
