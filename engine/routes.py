@@ -18,19 +18,6 @@ def health():
 
 @engine_bp.route("/sma_crossover", methods=["POST"])
 def sma_crossover_backtest():
-    """
-    POST /engine/sma_crossover
-
-    Request body:
-    {
-        "symbol":       "BTCUSDT",
-        "timeframe":    300,
-        "fast_period":  10,
-        "slow_period":  20,
-        "start_date":   20260101,
-        "end_date":     20260131
-    }
-    """
     try:
         start_time = time.time()
 

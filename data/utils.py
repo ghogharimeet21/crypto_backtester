@@ -23,10 +23,10 @@ def split_datetime(ms: int):
     return date_int, seconds
 
 
-def shift_date(date: str | int, shift: int) -> int:
+def shift_date(date: str | int, shift: int, date_format: str = "%Y%m%d") -> int:
     return int(
         (datetime.strptime(str(date), "%Y%m%d") + timedelta(days=shift)).strftime(
-            "%Y%m%d"
+            date_format
         )
     )
 

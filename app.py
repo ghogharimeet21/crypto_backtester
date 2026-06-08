@@ -17,9 +17,9 @@ CORS(app)
 
 meta_data.load_default_data(csv=False)
 
-# Registering blueprints
+# Registering blueprintsz
 from engine.routes import engine_bp
-from meta_viewer import meta_bp
+# from meta_viewer import meta_bp
 
 app.register_blueprint(engine_bp)
 # app.register_blueprint(meta_bp)   # live inspector → http://localhost:5002/meta/

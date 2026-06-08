@@ -26,10 +26,7 @@ class Trade:
         self.exit_time = exit_time
         self.exit_price = exit_price
         self.pnl = exit_price - self.entry_price
-        if self.entry_price:
-            self.pnl_pct = (self.pnl / self.entry_price) * 100
-        else:
-            self.pnl_pct = 0.0
+        self.pnl_pct = (self.pnl / self.entry_price) * 100
 
         self.trade_status = TradeStatus.CLOSE
 

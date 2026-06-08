@@ -8,6 +8,7 @@ import requests
 import os
 from pandas import read_csv, DataFrame
 from engine.evaluator.utils import get_date_span
+from pandas import read_csv
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,13 @@ class MetaData:
                     )
             else:
                 logger.info("Fetching BTCUSDT Jan 2026 from Binance...")
-                self.load_data("BTCUSDT", "20260101", "20260201")
+                
+                load_df = read_csv("default_load.csv")
+
+                for i in len(load_df):
+                    load = load_df.iloc[i]
+                    symbol, start_date, end_date = str(load["symbol"]), int(load["start_date"]), int(load["end_date"])
+                    self.load_data(symbol, start_date, end_date)
                 rows = []
                 for date, times in self.base_quotes.get("BTCUSDT", {}).items():
                     for time_sec, q in times.items():
@@ -83,12 +90,6 @@ class MetaData:
             self.load_data("BTCUSDT", "20260101", "20260201")
 
     def load_data(self, symbol: str, start_date, end_date, interval="1m"):
-        """Fetch 1-minute candles from Binance and insert them into base_quotes.
-
-        end_date is exclusive — data up to but not including that date is loaded.
-        Paginates automatically in chunks of 1 000 candles until end_date is reached.
-        Accepts start_date / end_date as int (20260101) or str ("20260101").
-        """
         start_ts = date_to_ms(start_date)
         end_ts = date_to_ms(end_date)
 
