@@ -1,5 +1,6 @@
 from data.utils import seconds_to_hms
-
+from typing import Literal
+from data.enums import OptionType
 
 class Quote:
     def __init__(
@@ -64,4 +65,61 @@ class Quote:
             and self._low == other._low
             and self._close == other._close
             and self._volume == other._volume
+        )
+
+
+
+class OptionQuote(Quote):
+    def __init__(
+        self,
+        date: int,
+        time: int,
+        symbol: str,
+        _open: float,
+        _high: float,
+        _low: float,
+        _close: float,
+        _volume: float,
+        strike: float,
+        expiry: int,
+        option_type: OptionType,
+        oi: float,
+        iv: float | None = None,
+    ):
+        super().__init__(date, time, symbol, _open, _high, _low, _close, _volume)
+        self.strike = strike
+        self.expiry = expiry
+        self.option_type = option_type
+        self.oi = oi
+        self.iv = iv
+
+    def __str__(self) -> str:
+        time_str = seconds_to_hms(self.time) if self.time is not None else None
+        return (
+            f"symbol={self.symbol}, date={self.date}, time={time_str}, "
+            f"strike={self.strike}, expiry={self.expiry}, type={self.option_type.value}, "
+            f"open={self._open}, high={self._high}, low={self._low}, close={self._close}, "
+            f"oi={self.oi}, iv={self.iv}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            **super().to_dict(),
+            "strike": self.strike,
+            "expiry": self.expiry,
+            "option_type": self.option_type.value,
+            "oi": self.oi,
+            "iv": self.iv,
+        }
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, OptionQuote):
+            return False
+        return (
+            super().__eq__(other)
+            and self.strike == other.strike
+            and self.expiry == other.expiry
+            and self.option_type == other.option_type
+            and self.oi == other.oi
+            and self.iv == other.iv
         )

@@ -1,9 +1,12 @@
+from typing import List, Optional
+
+import logging
+
+from data.local import meta_data
+from data.utils import seconds_to_hms
+from oms.enums import ExitReason, OrderSide
 from oms.models import Trade, BacktestResult
 from .models import SmaCrossoverStrategy
-from data.local import meta_data
-import logging
-from typing import List, Optional
-from data.utils import seconds_to_hms
 
 logger = logging.getLogger(__name__)
 
@@ -12,121 +15,298 @@ def execute(strategy: SmaCrossoverStrategy) -> BacktestResult:
     """
     SMA Crossover backtest.
 
-    Logic
+    Rules
     -----
-    - At every bar, read the fast SMA and slow SMA values.
-    - If fast crosses ABOVE slow and we have no open position → BUY (go long).
-    - If fast crosses BELOW slow and we have an open position → SELL (close long).
-
-    The strategy only holds one position at a time (no pyramiding).
-
-    Data flow
-    ---------
-    1. meta_data.indicators.compute_sma — loads / resamples quotes, then writes
-                                           indicator values into meta_data.indicators.
-    2. meta_data.get_quotes_series       — returns the ordered list of Quote objects
-                                           we iterate bar by bar.
-    3. meta_data.indicators.get_sma      — O(1) dict lookup per bar to read each SMA.
+    - Fast SMA crosses above slow SMA  -> BUY
+    - Fast SMA crosses below slow SMA   -> SELL/EXIT
+    - Only one open trade at a time
+    - Stoploss/target are checked using candle high/low
+    - If both target and stoploss hit in same candle, stoploss is assumed first
+      (conservative backtest)
     """
 
     symbol = strategy.symbol
-    tf     = strategy.timeframe
+    tf = strategy.timeframe
 
-    # ------------------------------------------------------------------
-    # Step 1: Compute both SMAs across the full date range.
-    #         validate_relevant_quotes is called internally — no need to
-    #         call load_data or resample_quotes manually.
-    # ------------------------------------------------------------------
+    allow_short = getattr(strategy, "allow_short", False)
+
+    # Support both naming styles:
+    #   strategy.target_points / strategy.stoploss_points
+    #   strategy.target / strategy.stop_loss
+    target_points = getattr(strategy, "target_points", None)
+    if target_points is None:
+        target_points = getattr(strategy, "target", None)
+
+    stoploss_points = getattr(strategy, "stoploss_points", None)
+    if stoploss_points is None:
+        stoploss_points = getattr(strategy, "stop_loss", None)
+
     logger.info(f"Computing SMA_{strategy.fast_period} on {symbol} tf={tf}...")
     meta_data.indicators.compute_sma(
-        symbol, tf, strategy.fast_period, strategy.start_date, strategy.end_date
+        symbol,
+        tf,
+        strategy.fast_period,
+        strategy.start_date,
+        strategy.end_date,
     )
 
     logger.info(f"Computing SMA_{strategy.slow_period} on {symbol} tf={tf}...")
     meta_data.indicators.compute_sma(
-        symbol, tf, strategy.slow_period, strategy.start_date, strategy.end_date
+        symbol,
+        tf,
+        strategy.slow_period,
+        strategy.start_date,
+        strategy.end_date,
     )
 
-    # ------------------------------------------------------------------
-    # Step 2: Get the full ordered series of candles for the date range.
-    # ------------------------------------------------------------------
     quotes = meta_data.get_quotes_series(
-        symbol, strategy.start_date, strategy.end_date, tf
+        symbol,
+        strategy.start_date,
+        strategy.end_date,
+        tf,
     )
 
     if not quotes:
         logger.warning("No quotes returned — check symbol, date range, and timeframe.")
         return BacktestResult([])
 
-    # ------------------------------------------------------------------
-    # Step 3: Walk bar by bar.
-    # ------------------------------------------------------------------
-    trades: List[Trade]     = []
+    trades: List[Trade] = []
     open_trade: Optional[Trade] = None
 
     prev_fast: Optional[float] = None
     prev_slow: Optional[float] = None
 
+    def build_trade(
+        entry_date: int,
+        entry_time: int,
+        entry_price: float,
+        side: OrderSide,
+    ) -> Trade:
+        """
+        Creates a trade with absolute target/stop levels derived from points.
+        Assumes target_points / stoploss_points are points from entry price.
+        """
+        if side == OrderSide.BUY:
+            target_price = (
+                entry_price + target_points if target_points is not None else None
+            )
+            stop_loss = (
+                entry_price - stoploss_points if stoploss_points is not None else None
+            )
+        else:
+            target_price = (
+                entry_price - target_points if target_points is not None else None
+            )
+            stop_loss = (
+                entry_price + stoploss_points if stoploss_points is not None else None
+            )
+
+        return Trade(
+            entry_date=entry_date,
+            entry_time=entry_time,
+            entry_price=entry_price,
+            order_side=side,
+            quantity=1,
+            target_price=target_price,
+            stop_loss=stop_loss,
+        )
+
     for quote in quotes:
         date, time = quote.date, quote.time
 
-        # Read pre-computed indicator values for this exact bar.
-        # period is now required — both fast and slow go through the same get_sma.
-        # Returns None for warmup bars — we skip those.
-        fast = meta_data.indicators.get_sma(symbol, tf, strategy.fast_period, date, time)
-        slow = meta_data.indicators.get_sma(symbol, tf, strategy.slow_period, date, time)
+        fast = meta_data.indicators.get_sma(
+            symbol, tf, strategy.fast_period, date, time
+        )
+        slow = meta_data.indicators.get_sma(
+            symbol, tf, strategy.slow_period, date, time
+        )
 
+        # Warmup bars
         if fast is None or slow is None or prev_fast is None or prev_slow is None:
             prev_fast, prev_slow = fast, slow
             continue
 
-        # --- Crossover detection ---
         crossed_above = (prev_fast <= prev_slow) and (fast > slow)
         crossed_below = (prev_fast >= prev_slow) and (fast < slow)
 
-        # BUY signal — fast SMA crossed above slow SMA
-        if crossed_above and open_trade is None:
-            open_trade = Trade(
-                entry_date=date,
-                entry_time=time,
-                entry_price=quote._close,
-            )
-            logger.info(
-                f"BUY  {symbol} @ {quote._close:.2f}  "
-                f"date={date} time={seconds_to_hms(time)}  "
-                f"fast={fast:.2f} slow={slow:.2f}"
-            )
+        closed_this_bar = False
 
-        # SELL signal — fast SMA crossed below slow SMA
-        elif crossed_below and open_trade is not None:
-            open_trade.close(
-                exit_date=date,
-                exit_time=time,
-                exit_price=quote._close,
-            )
-            logger.info(
-                f"SELL {symbol} @ {quote._close:.2f}  "
-                f"date={date} time={seconds_to_hms(time)}  "
-                f"pnl={open_trade.pnl:.2f} ({open_trade.pnl_pct:.2f}%)"
-            )
-            trades.append(open_trade)
-            open_trade = None
+        # ---------------------------------------------------------------------
+        # 1) Manage existing open position first
+        # ---------------------------------------------------------------------
+        if open_trade is not None:
+            if open_trade.order_side == OrderSide.BUY:
+                stoploss_hit = (
+                    open_trade.stop_loss is not None
+                    and quote._low <= open_trade.stop_loss
+                )
+                target_hit = (
+                    open_trade.target_price is not None
+                    and quote._high >= open_trade.target_price
+                )
+
+                if stoploss_hit and target_hit:
+                    # Conservative assumption: stoploss first
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=open_trade.stop_loss,
+                        exit_reason=ExitReason.STOPLOSS,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+                elif stoploss_hit:
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=open_trade.stop_loss,
+                        exit_reason=ExitReason.STOPLOSS,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+                elif target_hit:
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=open_trade.target_price,
+                        exit_reason=ExitReason.TARGET,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+                elif crossed_below:
+                    # Opposite signal: exit long at candle close
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=quote._close,
+                        exit_reason=ExitReason.SIGNAL,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+            else:
+                # SHORT position
+                stoploss_hit = (
+                    open_trade.stop_loss is not None
+                    and quote._high >= open_trade.stop_loss
+                )
+                target_hit = (
+                    open_trade.target_price is not None
+                    and quote._low <= open_trade.target_price
+                )
+
+                if stoploss_hit and target_hit:
+                    # Conservative assumption: stoploss first
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=open_trade.stop_loss,
+                        exit_reason=ExitReason.STOPLOSS,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+                elif stoploss_hit:
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=open_trade.stop_loss,
+                        exit_reason=ExitReason.STOPLOSS,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+                elif target_hit:
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=open_trade.target_price,
+                        exit_reason=ExitReason.TARGET,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+                elif crossed_above:
+                    # Opposite signal: exit short at candle close
+                    open_trade.close(
+                        exit_date=date,
+                        exit_time=time,
+                        exit_price=quote._close,
+                        exit_reason=ExitReason.SIGNAL,
+                    )
+                    trades.append(open_trade)
+                    open_trade = None
+                    closed_this_bar = True
+
+        # ---------------------------------------------------------------------
+        # 2) If flat now, look for a new entry
+        #    Do not open a new trade on the same bar where one was closed.
+        # ---------------------------------------------------------------------
+        if open_trade is None and not closed_this_bar:
+            if crossed_above:
+                open_trade = build_trade(
+                    entry_date=date,
+                    entry_time=time,
+                    entry_price=quote._close,
+                    side=OrderSide.BUY,
+                )
+                logger.info(
+                    f"BUY  {symbol} @ {quote._close:.2f} "
+                    f"date={date} time={seconds_to_hms(time)} "
+                    f"fast={fast:.2f} slow={slow:.2f}"
+                )
+
+            elif crossed_below and allow_short:
+                open_trade = build_trade(
+                    entry_date=date,
+                    entry_time=time,
+                    entry_price=quote._close,
+                    side=OrderSide.SELL,
+                )
+                logger.info(
+                    f"SELL {symbol} @ {quote._close:.2f} "
+                    f"date={date} time={seconds_to_hms(time)} "
+                    f"fast={fast:.2f} slow={slow:.2f}"
+                )
 
         prev_fast, prev_slow = fast, slow
 
-    # If still in a position at end of range, record it as open (no forced close)
+    # -------------------------------------------------------------------------
+    # 3) Force close any remaining open position at end of backtest
+    # -------------------------------------------------------------------------
     if open_trade is not None:
-        logger.info(
-            f"Strategy ended with an open position entered at "
-            f"date={open_trade.entry_date} time={seconds_to_hms(open_trade.entry_time)} "
-            f"price={open_trade.entry_price:.2f}"
+        last_quote = quotes[-1]
+        open_trade.close(
+            exit_date=last_quote.date,
+            exit_time=last_quote.time,
+            exit_price=last_quote._close,
+            exit_reason=ExitReason.EOD,
         )
         trades.append(open_trade)
 
+        logger.info(
+            f"Forced EOD close for {symbol} "
+            f"entry_date={open_trade.entry_date} "
+            f"entry_time={seconds_to_hms(open_trade.entry_time)} "
+            f"exit_price={last_quote._close:.2f}"
+        )
+
     result = BacktestResult(trades)
+
     logger.info(
         f"Backtest complete — trades={result.total_trades} "
         f"win_rate={result.win_rate}% "
         f"total_pnl={result.total_pnl:.2f}"
     )
+
     return result

@@ -17,17 +17,11 @@ BINANCE_HISTORICAL_URL = "https://api.binance.com/api/v3/klines"
 
 class MetaData:
     def __init__(self):
-        # symbol -> date -> time -> quote
-        self.base_quotes: Dict[str, Dict[int, Dict[int, Quote]]] = {}
+        # symbol -> timeframe -> date -> time -> quote
+        self.quotes: Dict[str, Dict[int, Dict[int, Dict[int, Quote]]]] = {}
 
         # symbol -> timeframe -> set_of_dates
         self.available_dates: Dict[str, Dict[int, set]] = {}
-
-        # symbol -> timeframe -> date -> time -> quote
-        self.resampled_quotes: Dict[str, Dict[int, Dict[int, Dict[int, Quote]]]] = {}
-
-        # symbol -> [time_frame]
-        self.resampled_info: Dict[str, set] = {}
 
         # Indicator gets a back-reference to self so it can fetch quotes on its own
         self.indicators: Indicator = Indicator(self)
@@ -60,15 +54,16 @@ class MetaData:
                     )
             else:
                 logger.info("Fetching BTCUSDT Jan 2026 from Binance...")
-                
+
                 load_df = read_csv("default_load.csv")
 
                 for i in len(load_df):
                     load = load_df.iloc[i]
                     symbol, start_date, end_date = str(load["symbol"]), int(load["start_date"]), int(load["end_date"])
                     self.load_data(symbol, start_date, end_date)
+
                 rows = []
-                for date, times in self.base_quotes.get("BTCUSDT", {}).items():
+                for date, times in self.quotes.get("BTCUSDT", {}).get(60, {}).items():
                     for time_sec, q in times.items():
                         rows.append(
                             {
@@ -152,73 +147,41 @@ class MetaData:
     # Quote Storage (insert / get)
     # =========================================================================
 
-    def insert_quote(self, quote: Quote, timeframe: int = None):
+    def insert_quote(self, quote: Quote, timeframe: int = 60):
         date, time, symbol = quote.date, quote.time, quote.symbol
 
-        if (not timeframe) or timeframe == 60:
-            if symbol not in self.base_quotes:
-                self.base_quotes[symbol] = {}
-                if symbol not in self.available_dates:
-                    self.available_dates[symbol] = {}
-                if 60 not in self.available_dates[symbol]:
-                    self.available_dates[symbol][60] = set()
-            if date not in self.base_quotes[symbol]:
-                self.base_quotes[symbol][date] = {}
-                if 60 not in self.available_dates[symbol]:
-                    self.available_dates[symbol][60] = set()
-                self.available_dates[symbol][60].add(date)
-            if time not in self.base_quotes[symbol][date]:
-                self.base_quotes[symbol][date][time] = quote
+        if symbol not in self.quotes:
+            self.quotes[symbol] = {}
+        if timeframe not in self.quotes[symbol]:
+            self.quotes[symbol][timeframe] = {}
+        if date not in self.quotes[symbol][timeframe]:
+            self.quotes[symbol][timeframe][date] = {}
 
-        else:
-            if symbol not in self.resampled_quotes:
-                self.resampled_quotes[symbol] = {}
-                if symbol not in self.available_dates:
-                    self.available_dates[symbol] = {}
-            if timeframe not in self.resampled_quotes[symbol]:
-                self.resampled_quotes[symbol][timeframe] = {}
-                self.available_dates[symbol][timeframe] = set()
-            if date not in self.resampled_quotes[symbol][timeframe]:
-                self.resampled_quotes[symbol][timeframe][date] = {}
-                self.available_dates[symbol][timeframe].add(date)
-            if time not in self.resampled_quotes[symbol][timeframe][date]:
-                self.resampled_quotes[symbol][timeframe][date][time] = quote
+        if time not in self.quotes[symbol][timeframe][date]:
+            self.quotes[symbol][timeframe][date][time] = quote
 
-            if symbol not in self.resampled_info:
-                self.resampled_info[symbol] = set()
-            self.resampled_info[symbol].add(timeframe)
+        # track available dates
+        if symbol not in self.available_dates:
+            self.available_dates[symbol] = {}
+        if timeframe not in self.available_dates[symbol]:
+            self.available_dates[symbol][timeframe] = set()
+        self.available_dates[symbol][timeframe].add(date)
 
     def get_quote(
-        self, symbol: str, date: int, time: int | str, timeframe: int = None
+        self, symbol: str, date: int, time: int | str, timeframe: int = 60
     ) -> Quote | None:
         if isinstance(time, str):
             time = hms_to_seconds(time)
-        if not timeframe or timeframe == 60:
-            return self.base_quotes.get(symbol, {}).get(date, {}).get(time)
-        else:
-            return (
-                self.resampled_quotes.get(symbol, {})
-                .get(timeframe, {})
-                .get(date, {})
-                .get(time)
-            )
+        return self.quotes.get(symbol, {}).get(timeframe, {}).get(date, {}).get(time)
 
     def get_quotes_series(
-        self, symbol: str, start_date: int, end_date: int, timeframe: int = None
+        self, symbol: str, start_date: int, end_date: int, timeframe: int = 60
     ) -> List[Quote]:
         date_span = get_date_span(start_date, end_date)
         quotes: List[Quote] = []
 
         for date in date_span:
-            if (not timeframe) or timeframe == 60:
-                day_quotes = self.base_quotes.get(symbol, {}).get(date, {})
-            else:
-                day_quotes = (
-                    self.resampled_quotes.get(symbol, {})
-                    .get(timeframe, {})
-                    .get(date, {})
-                )
-
+            day_quotes = self.quotes.get(symbol, {}).get(timeframe, {}).get(date, {})
             for time in sorted(day_quotes.keys()):
                 quotes.append(day_quotes[time])
 
@@ -253,40 +216,20 @@ class MetaData:
     # Resampling
     # =========================================================================
 
-    def get_best_base(self, symbol: str, target_tf: int):
+    def get_best_base(self, symbol: str, target_tf: int) -> int | None:
         """Return the largest available timeframe that evenly divides target_tf."""
-        candidates = [60]
-
-        if symbol in self.resampled_quotes:
-            candidates += list(self.resampled_quotes[symbol].keys())
-
-        valid = [t for t in candidates if target_tf % t == 0]
-
-        if not valid:
-            return None
-
-        return max(valid)
+        available_tfs = list(self.quotes.get(symbol, {}).keys()) or [60]
+        valid = [t for t in available_tfs if target_tf % t == 0]
+        return max(valid) if valid else None
 
     def resample_day(self, symbol: str, date: int, base_tf: int, target_tf: int):
         """Aggregate base_tf candles for a single day into target_tf candles."""
-        if base_tf == 60:
-            if symbol not in self.base_quotes or date not in self.base_quotes[symbol]:
-                logger.warning(
-                    f"resample_day: no 1-min data for symbol={symbol}, date={date} — skipping"
-                )
-                return
-            base_data = self.base_quotes[symbol][date]
-        else:
-            if (
-                symbol not in self.resampled_quotes
-                or base_tf not in self.resampled_quotes[symbol]
-                or date not in self.resampled_quotes[symbol][base_tf]
-            ):
-                logger.warning(
-                    f"resample_day: no base data for symbol={symbol}, base_tf={base_tf}, date={date} — skipping"
-                )
-                return
-            base_data = self.resampled_quotes[symbol][base_tf][date]
+        base_data = self.quotes.get(symbol, {}).get(base_tf, {}).get(date)
+        if not base_data:
+            logger.warning(
+                f"resample_day: no data for symbol={symbol}, base_tf={base_tf}, date={date} — skipping"
+            )
+            return
 
         times = sorted(base_data.keys())
         bucket: List[Quote] = []
@@ -359,12 +302,8 @@ class MetaData:
             raise ValueError("No valid base timeframe found")
 
         for date in date_span:
-            if (
-                timeframe in self.resampled_quotes.get(symbol, {})
-                and date in self.resampled_quotes[symbol][timeframe]
-            ):
+            if date in self.quotes.get(symbol, {}).get(timeframe, {}):
                 continue
-
             self.resample_day(symbol, date, base_tf, timeframe)
 
 

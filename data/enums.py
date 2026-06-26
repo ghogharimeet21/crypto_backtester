@@ -11,3 +11,9 @@ class TimeFrameType(Enum):
     WEEK = "WEEK"
     MONTH = "MONTH"
     YEAR = "YEAR"
+
+
+
+class OptionType(Enum):
+    CE = "CE"
+    PE = "PE"

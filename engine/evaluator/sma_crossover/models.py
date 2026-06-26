@@ -23,6 +23,9 @@ class SmaCrossoverStrategy:
         self.start_date: int = int(request_json["start_date"])
         self.end_date: int = int(request_json["end_date"])
 
+        self.target: int | float = float(request_json["target"])
+        self.stop_loss: int | float = float(request_json["stop_loass"])
+
         periods = request_json.get("periods")
         if periods is None:
             if "fast_period" in request_json and "slow_period" in request_json:
