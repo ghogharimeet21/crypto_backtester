@@ -49,3 +49,7 @@ def seconds_to_hms(seconds: int) -> str:
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def get_atm(spot, strike_gap):
+    return round(spot / strike_gap) * strike_gap
