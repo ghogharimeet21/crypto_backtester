@@ -1,0 +1,23 @@
+services:
+  crypto_backtester:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto_backtester
+    ports:
+      - "5003:5003"
+    volumes:
+      # Bind-mount source so edits on host reflect instantly without a rebuild.
+      # Remove this for a prod-style immutable image build.
+      - .:/app
+      # Keep container's own __pycache__ separate from host's, avoids stale
+      # .pyc / cross-platform bytecode issues.
+      - backtester_pycache:/app/__pycache__
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Kolkata
+    restart: unless-stopped
+
+volumes:
+  backtester_pycache:

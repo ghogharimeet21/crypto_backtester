@@ -1,7 +1,8 @@
 from flask import Flask
 from flask_cors import CORS
 import logging
-from data.local import meta_data
+from data import meta_data
+
 
 
 logging.basicConfig(
@@ -15,14 +16,11 @@ app = Flask(__name__)
 CORS(app)
 
 
-meta_data.load_default_data()
+meta_data.data_loader.spot_feed.load_data("BTCUSD", 20260101, 20260201)
 
-# Registering blueprints
+
 from engine.routes import engine_bp
-from meta_viewer import meta_bp
-
 app.register_blueprint(engine_bp)
-app.register_blueprint(meta_bp)   # live inspector → http://localhost:5002/meta/
 
 
-app.run(host="0.0.0.0", port=5002, debug=True, use_reloader=False)
+app.run(host="0.0.0.0", port=5003, debug=True, use_reloader=False)
