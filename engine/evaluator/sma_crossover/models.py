@@ -1,6 +1,5 @@
 from typing import List
 from engine.evaluator.utils import get_date_span
-from data.utils import hms_to_seconds
 
 
 class SmaCrossoverStrategy:
@@ -14,26 +13,49 @@ class SmaCrossoverStrategy:
         "fast_period":  10,           # fast SMA lookback
         "slow_period":  20,           # slow SMA lookback
         "start_date":   20260101,
-        "end_date":     20260131
+        "end_date":     20260131,
+        "target":       500,          # points away from entry
+        "stop_loss":    200,          # points away from entry
+        "allow_short":  false         # optional, default false
     }
     """
 
     def __init__(self, request_json: dict):
         self.symbol: str = request_json["symbol"]
         self.timeframe: int = int(request_json["timeframe"])
-        self.periods: List[int] = request_json.get("periods")
         self.start_date: int = int(request_json["start_date"])
         self.end_date: int = int(request_json["end_date"])
+
+        self.target: int | float = float(request_json["target"])
+        self.stop_loss: int | float = float(request_json["stop_loss"])
+        self.allow_short: bool = bool(request_json.get("allow_short", False))
+
+        periods = request_json.get("periods")
+        if periods is None:
+            if "fast_period" in request_json and "slow_period" in request_json:
+                periods = [
+                    int(request_json["fast_period"]),
+                    int(request_json["slow_period"]),
+                ]
+            else:
+                raise ValueError(
+                    "Provide either 'periods': [fast, slow] or "
+                    "'fast_period' and 'slow_period'"
+                )
+        if not isinstance(periods, list) or len(periods) != 2:
+            raise ValueError("periods must be a list of exactly two integers")
+        self.periods: List[int] = [int(periods[0]), int(periods[1])]
 
         # Pre-build the full list of dates the strategy will run over
         self.date_span: List[int] = get_date_span(self.start_date, self.end_date)
 
-        if len(self.periods) > 2:
-            raise ValueError("not allowed more then 2 periods")
-        self.fast_period = int(sorted(self.periods)[0])
-        self.slow_period = int(sorted(self.periods)[-1])
+        sorted_p = sorted(self.periods)
+        self.fast_period = int(sorted_p[0])
+        self.slow_period = int(sorted_p[1])
 
         if self.fast_period >= self.slow_period:
             raise ValueError("fast_period must be less than slow_period")
+        if self.fast_period <= 0 or self.slow_period <= 0:
+            raise ValueError("periods must be positive")
         if self.timeframe <= 0:
             raise ValueError("timeframe must be positive")

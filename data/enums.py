@@ -11,3 +11,5 @@ class TimeFrameType(Enum):
     WEEK = "WEEK"
     MONTH = "MONTH"
     YEAR = "YEAR"
+
+

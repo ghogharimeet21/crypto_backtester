@@ -2,8 +2,10 @@ import time
 import logging
 import traceback
 from flask import Blueprint, request, jsonify
-from data.utils import seconds_to_hms
-from engine.evaluator import sma_crossover
+from commons.utils import seconds_to_hms
+from engine.evaluator import sma_crossover, trend_confluence, test_sets
+from engine.runtime import RUNTIME
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +20,6 @@ def health():
 
 @engine_bp.route("/sma_crossover", methods=["POST"])
 def sma_crossover_backtest():
-    """
-    POST /engine/sma_crossover
-
-    Request body:
-    {
-        "symbol":       "BTCUSDT",
-        "timeframe":    300,
-        "fast_period":  10,
-        "slow_period":  20,
-        "start_date":   20260101,
-        "end_date":     20260131
-    }
-    """
     try:
         start_time = time.time()
 
@@ -51,3 +40,36 @@ def sma_crossover_backtest():
     except Exception as e:
         logging.error(traceback.format_exc())
         return jsonify({"status": "failed", "err": str(e)}), 400
+
+
+@engine_bp.route("/trend_confluence", methods=["POST"])
+def trend_confluence_backtest():
+    try:
+        start_time = time.time()
+
+        result = trend_confluence.execute(
+            trend_confluence.models.TrendConfluenceStrategy(request.json)
+        )
+
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "execution_time_sec": round(time.time() - start_time, 3),
+                    "result": result.to_dict(),
+                }
+            ),
+            200,
+        )
+    except Exception as e:
+        logging.error(traceback.format_exc())
+        return jsonify({"status": "failed", "err": str(e)}), 400
+
+
+
+@engine_bp.route("/test_area", methods=["POST"])
+def test_area():
+
+    test_sets.execute()
+
+    return jsonify({"msg": "all_good"}), 200
