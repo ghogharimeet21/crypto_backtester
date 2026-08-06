@@ -4,7 +4,6 @@ import traceback
 from flask import Blueprint, request, jsonify
 from commons.utils import seconds_to_hms
 from engine.evaluator import sma_crossover, trend_confluence, test_sets
-from engine.runtime import RUNTIME
 
 
 logger = logging.getLogger(__name__)
