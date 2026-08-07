@@ -10,7 +10,10 @@ class SOURCE(Enum):
 
 
 
-
+class BAND(Enum):
+    UPPER = "UPPER"
+    MID = "MID"
+    LOWER = "LOWER"
 
 
 class BAND(Enum):
